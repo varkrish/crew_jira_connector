@@ -1,0 +1,13 @@
+.git
+.gitignore
+.pytest_cache
+__pycache__
+*.pyc
+.env
+.env.example
+*.db
+data/
+*.egg-info
+.eggs
+README.md
+compose.yaml

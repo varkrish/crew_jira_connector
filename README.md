@@ -63,28 +63,38 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
-## Docker
+## Podman Compose / Docker Compose
 
-Build from repo root:
+From the repo root:
 
 ```bash
-docker build -f Containerfile .
+# Copy .env.example to .env and set CREW_STUDIO_URL, JIRA_* and LLM_* vars
+cp .env.example .env
+
+# Build and start
+podman compose up -d --build
+# or: docker compose up -d --build
+
+# Logs
+podman compose logs -f
 ```
 
-Or with build context at repo root and Dockerfile in repo:
+Default port is 8080 (override with `CONNECTOR_PORT`). The connector uses a named volume `connector-data` for the SQLite DB.
+
+## Docker (single container)
+
+Build and run without compose:
 
 ```bash
-docker build -t crew-jira-connector .
-```
+podman build -t crew-jira-connector .
+# or: docker build -t crew-jira-connector .
 
-Run:
-
-```bash
-docker run -p 8080:8080 \
-  -e CREW_STUDIO_URL=http://host.docker.internal:8081 \
+podman run -p 8080:8080 \
+  -e CREW_STUDIO_URL=http://host.containers.internal:8081 \
   -e JIRA_BASE_URL=https://your-site.atlassian.net \
   -e JIRA_EMAIL=you@example.com \
   -e JIRA_API_TOKEN=your-token \
+  -v crew-jira-data:/app/data \
   crew-jira-connector
 ```
 

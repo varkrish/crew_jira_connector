@@ -2,10 +2,9 @@ FROM registry.access.redhat.com/ubi9/python-312:latest
 
 WORKDIR /app
 
-# Build from repo root: docker build -f crew_jira_connector/Containerfile .
-COPY crew_jira_connector/ crew_jira_connector/
-RUN pip install --no-cache-dir -r crew_jira_connector/requirements.txt && \
-    pip install -e crew_jira_connector/
+# Standalone repo: build context is repo root (.)
+COPY . .
+RUN pip install --no-cache-dir -r requirements.txt && pip install -e .
 
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8080
