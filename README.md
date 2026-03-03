@@ -1,6 +1,6 @@
 # Crew Jira Connector
 
-Bridges Jira issues to [Crew Studio](https://github.com/varun-krishnamurthy/crew-coding-bots) so that moving an issue to a trigger status (e.g. **Ready for Dev**) automatically creates a build, refactor, or migration job and syncs status back to Jira.
+Bridges Jira issues to [Crew Studio](https://github.com/varkrish/crew-coding-bots) so that moving an issue to a trigger status (e.g. **Ready for Dev**) automatically creates a build, refactor, or migration job and syncs status back to Jira.
 
 ## Features
 
