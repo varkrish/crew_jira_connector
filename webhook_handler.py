@@ -73,7 +73,7 @@ def _get_description(payload: dict) -> str:
     return str(desc).strip()
 
 
-def process_webhook(
+async def process_webhook(
     payload: dict,
     raw_body: bytes,
     signature_header: Optional[str],
@@ -140,7 +140,7 @@ def process_webhook(
                 return 200, {"error": "repo access failed", "details": [msg]}
 
     # 7. AI classifier
-    classification = asyncio.run(classify_issue(
+    classification = await classify_issue(
         summary=summary,
         description=description,
         issue_type=_get_issue_type(payload),
@@ -150,7 +150,7 @@ def process_webhook(
         mode_map=settings.jira_mode_map_dict,
         default_mode=settings.jira_default_mode,
         confidence_threshold=settings.classifier_confidence_threshold,
-    ))
+    )
 
     # 8. Classifier output validation
     final_repo = classification.repo_url or (repo_urls[0] if repo_urls else None)
@@ -175,15 +175,17 @@ def process_webhook(
     if not feature_blocks and classification.has_gherkin:
         feature_blocks = extract_feature_blocks(description)
 
+    jira_metadata = {
+        "jira_issue_key": issue_key,
+        "jira_base_url": settings.jira_base_url,
+        "jira_issue_url": f"{settings.jira_base_url}/browse/{issue_key}",
+    }
+
     feature_files: list[Path] = []
     if feature_blocks:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             feature_files = write_feature_files(feature_blocks, tmp_path)
-            # Copy to a persistent temp dir so we can use them in the sync call
-            # Actually - we need to pass them to create_job. The tmp dir will be deleted when we exit the with block.
-            # So we need to create job inside the with block, or copy files elsewhere.
-            # Let me create job inside the with block.
             client = CrewClient(settings.crew_studio_url)
             try:
                 resp = client.create_job(
@@ -191,6 +193,7 @@ def process_webhook(
                     github_urls=github_urls,
                     mode=classification.mode,
                     feature_files=feature_files,
+                    metadata=jira_metadata,
                 )
             except Exception as e:
                 logger.exception("Failed to create Crew job")
@@ -228,6 +231,7 @@ def process_webhook(
                 github_urls=github_urls,
                 mode=classification.mode,
                 feature_files=None,
+                metadata=jira_metadata,
             )
         except Exception as e:
             logger.exception("Failed to create Crew job")

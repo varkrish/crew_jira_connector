@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     jira_api_token: str = ""
     jira_username: str = ""
     jira_password: str = ""
+    jira_personal_access_token: str = ""
 
     # Webhook filtering
     jira_project_keys: str = ""

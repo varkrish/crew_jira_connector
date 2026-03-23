@@ -12,6 +12,7 @@
 services:
   backend:
     image: quay.io/varkrish/crew-backend:latest
+    platform: linux/amd64
     container_name: crew-backend
     ports:
       - "${BACKEND_PORT:-8080}:8080"
@@ -35,11 +36,26 @@ services:
 
   frontend:
     image: quay.io/varkrish/crew-frontend:latest
+    platform: linux/amd64
     container_name: crew-frontend
     ports:
       - "${FRONTEND_PORT:-3000}:8080"
     depends_on:
       - backend
+    restart: unless-stopped
+    networks:
+      - crew-net
+
+  jira:
+    image: docker.io/atlassian/jira-software:9.4.0
+    platform: linux/amd64
+    container_name: jira
+    ports:
+      - "${JIRA_PORT:-8081}:8080"
+    volumes:
+      - jira-data:/var/atlassian/application-data/jira
+    environment:
+      - ATL_JIRA_HOME=/var/atlassian/application-data/jira
     restart: unless-stopped
     networks:
       - crew-net
@@ -55,11 +71,12 @@ services:
     environment:
       - CREW_STUDIO_URL=http://backend:8080
       - JIRA_BACKEND=${JIRA_BACKEND:-rest}
-      - JIRA_BASE_URL=${JIRA_BASE_URL:-}
+      - JIRA_BASE_URL=${JIRA_BASE_URL:-http://jira:8080}
       - JIRA_EMAIL=${JIRA_EMAIL:-}
       - JIRA_API_TOKEN=${JIRA_API_TOKEN:-}
       - JIRA_USERNAME=${JIRA_USERNAME:-}
       - JIRA_PASSWORD=${JIRA_PASSWORD:-}
+      - JIRA_PERSONAL_ACCESS_TOKEN=${JIRA_PERSONAL_ACCESS_TOKEN:-}
       - JIRA_PROJECT_KEYS=${JIRA_PROJECT_KEYS:-}
       - JIRA_TRIGGER_STATUS=${JIRA_TRIGGER_STATUS:-Ready for Dev}
       - JIRA_WEBHOOK_SECRET=${JIRA_WEBHOOK_SECRET:-}
@@ -71,6 +88,7 @@ services:
       - connector-data:/app/data
     depends_on:
       - backend
+      - jira
     restart: unless-stopped
     networks:
       - crew-net
@@ -81,6 +99,8 @@ volumes:
   crew-data:
     driver: local
   connector-data:
+    driver: local
+  jira-data:
     driver: local
 
 networks:

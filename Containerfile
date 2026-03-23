@@ -2,9 +2,11 @@ FROM registry.access.redhat.com/ubi9/python-312:latest
 
 WORKDIR /app
 
-# Standalone repo: build context is repo root (.)
-COPY . .
-RUN pip install --no-cache-dir -r requirements.txt && pip install -e .
+# Copy into /tmp; re-copy into writable /tmp/build so setuptools can write egg-info (rootless/non-root fix)
+COPY . /tmp/pkg
+RUN mkdir -p /tmp/build && cp -r /tmp/pkg/. /tmp/build/ \
+    && pip install --no-cache-dir -r /tmp/build/requirements.txt && pip install /tmp/build
+WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8080

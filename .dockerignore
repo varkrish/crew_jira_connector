@@ -11,3 +11,4 @@ data/
 .eggs
 README.md
 compose.yaml
+config.yaml

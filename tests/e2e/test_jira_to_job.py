@@ -58,19 +58,11 @@ def _mock_settings():
     return s
 
 
-def test_e2e_build_job(e2e_db):
+@pytest.mark.asyncio
+async def test_e2e_build_job(e2e_db):
     """Full flow: webhook -> classify -> create build job -> comment."""
     payload = _build_payload()
     backend = MagicMock()
-
-    classifier_result_json = json.dumps({
-        "mode": "build",
-        "repo_url": None,
-        "has_gherkin": False,
-        "gherkin_features": [],
-        "confidence": 0.9,
-        "reasoning": "New API creation",
-    })
 
     with patch("crew_jira_connector.webhook_handler.get_settings", return_value=_mock_settings()):
         with patch("crew_jira_connector.webhook_handler.classify_issue", new_callable=AsyncMock) as mock_cls:
@@ -84,7 +76,7 @@ def test_e2e_build_job(e2e_db):
                 mock_crew.create_job.return_value = {"job_id": "e2e-job-1"}
                 mock_crew_cls.return_value = mock_crew
 
-                code, body = process_webhook(payload, b"{}", None, backend, e2e_db)
+                code, body = await process_webhook(payload, b"{}", None, backend, e2e_db)
 
     assert code == 200
     assert body.get("job_id") == "e2e-job-1"
@@ -93,7 +85,8 @@ def test_e2e_build_job(e2e_db):
     assert e2e_db.has_active_job("PROJ-100")
 
 
-def test_e2e_refactor_with_repo(e2e_db):
+@pytest.mark.asyncio
+async def test_e2e_refactor_with_repo(e2e_db):
     """Refactor flow: classify -> create job -> trigger refactor -> comment."""
     payload = _build_payload(
         key="PROJ-101",
@@ -120,11 +113,77 @@ def test_e2e_refactor_with_repo(e2e_db):
                 mock_crew.trigger_refactor.return_value = {"status": "running"}
                 mock_crew_cls.return_value = mock_crew
 
-                code, body = process_webhook(payload, b"{}", None, backend, e2e_db)
+                code, body = await process_webhook(payload, b"{}", None, backend, e2e_db)
 
     assert code == 200
     assert body.get("mode") == "refactor"
     mock_crew.trigger_refactor.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_e2e_vision_preserves_tech_stack_ac24_style(e2e_db):
+    """AC-24 style: description with 'Spring Boot with PostgreSQL. Include OpenAPI docs.'
+    Vision sent to Crew must contain that tech stack; metadata must include jira_issue_key."""
+    summary = "Build a REST API for employee directory service"
+    description = """Create a new microservice that provides CRUD endpoints for managing employee records.
+- GET /api/employees - list all employees with pagination
+- POST /api/employees - create new employee
+- GET /api/employees/{id} - get employee by ID
+- PUT /api/employees/{id} - update employee
+- DELETE /api/employees/{id} - delete employee
+
+Use Spring Boot with PostgreSQL. Include OpenAPI docs."""
+
+    payload = _build_payload(
+        key="AC-24",
+        summary=summary,
+        description=description,
+        status="In Progress",
+        project="AC",
+        issue_type="Story",
+    )
+    backend = MagicMock()
+    settings = _mock_settings()
+    settings.jira_trigger_status = "In Progress"
+
+    with patch("crew_jira_connector.webhook_handler.get_settings", return_value=settings):
+        with patch("crew_jira_connector.webhook_handler.classify_issue", new_callable=AsyncMock) as mock_cls:
+            from crew_jira_connector.ai_classifier import ClassificationResult
+            mock_cls.return_value = ClassificationResult(
+                mode="build",
+                repo_url=None,
+                has_gherkin=False,
+                gherkin_features=[],
+                confidence=0.9,
+                reasoning="New API",
+            )
+            with patch("crew_jira_connector.webhook_handler.CrewClient") as mock_crew_cls:
+                mock_crew = MagicMock()
+                mock_crew.create_job.return_value = {"job_id": "ac24-job-1"}
+                mock_crew_cls.return_value = mock_crew
+
+                code, body = await process_webhook(payload, b"{}", None, backend, e2e_db)
+
+    assert code == 200
+    assert body.get("job_id") == "ac24-job-1"
+    assert body.get("issue_key") == "AC-24"
+    assert body.get("mode") == "build"
+
+    # Vision sent to create_job must contain the tech stack from the description
+    call_kw = mock_crew.create_job.call_args[1]
+    vision = call_kw["vision"]
+    assert "Spring Boot" in vision
+    assert "PostgreSQL" in vision
+    assert "OpenAPI" in vision
+    assert "employee" in vision
+
+    # Jira metadata must be passed for backtracking
+    metadata = call_kw.get("metadata") or {}
+    assert metadata.get("jira_issue_key") == "AC-24"
+    assert "jira_issue_url" in metadata
+
+    backend.add_comment.assert_called()
+    assert e2e_db.has_active_job("AC-24")
 
 
 def test_e2e_status_roundtrip(e2e_db):

@@ -49,6 +49,7 @@ def _create_jira_backend(settings: Settings) -> JiraBackend:
         api_token=settings.jira_api_token,
         username=settings.jira_username,
         password=settings.jira_password,
+        personal_access_token=settings.jira_personal_access_token,
     )
 
 
@@ -91,7 +92,7 @@ async def jira_webhook(request: Request):
     backend = _get_jira_backend()
     db = _db or IssueJobDB(get_settings().db_path)
 
-    status, body = process_webhook(payload, raw, signature, backend, db)
+    status, body = await process_webhook(payload, raw, signature, backend, db)
     return JSONResponse(body, status_code=status)
 
 

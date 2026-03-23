@@ -70,7 +70,8 @@ def test_get_description_adf():
     assert "Hello ADF" in _get_description(payload)
 
 
-def test_process_webhook_status_filter(db):
+@pytest.mark.asyncio
+async def test_process_webhook_status_filter(db):
     """Wrong status should skip."""
     payload = _make_payload(status="To Do")
     backend = MagicMock()
@@ -78,12 +79,13 @@ def test_process_webhook_status_filter(db):
         mock_settings.return_value.jira_webhook_secret = ""
         mock_settings.return_value.jira_project_keys_list = []
         mock_settings.return_value.jira_trigger_status = "Ready for Dev"
-        code, body = process_webhook(payload, b"{}", None, backend, db)
+        code, body = await process_webhook(payload, b"{}", None, backend, db)
     assert code == 200
     assert "skipped" in body
 
 
-def test_process_webhook_content_too_short(db):
+@pytest.mark.asyncio
+async def test_process_webhook_content_too_short(db):
     """Short summary should fail content validation."""
     payload = _make_payload(summary="Fix", description="")
     backend = MagicMock()
@@ -96,12 +98,13 @@ def test_process_webhook_content_too_short(db):
         s.min_summary_length = 10
         s.allowed_git_hosts_list = ["github.com"]
         s.validate_repo_access = False
-        code, body = process_webhook(payload, b"{}", None, backend, db)
+        code, body = await process_webhook(payload, b"{}", None, backend, db)
     assert code == 200
     assert "error" in body
 
 
-def test_process_webhook_idempotency(db):
+@pytest.mark.asyncio
+async def test_process_webhook_idempotency(db):
     """Duplicate issue should be skipped."""
     db.insert("PROJ-42", "existing-job", "build")
     payload = _make_payload()
@@ -111,6 +114,6 @@ def test_process_webhook_idempotency(db):
         s.jira_webhook_secret = ""
         s.jira_project_keys_list = []
         s.jira_trigger_status = "Ready for Dev"
-        code, body = process_webhook(payload, b"{}", None, backend, db)
+        code, body = await process_webhook(payload, b"{}", None, backend, db)
     assert code == 200
     assert "duplicate" in body.get("skipped", "")

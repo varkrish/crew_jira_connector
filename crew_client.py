@@ -19,6 +19,7 @@ class CrewClient:
         github_urls: Optional[list[str]] = None,
         mode: str = "build",
         feature_files: Optional[list[Path]] = None,
+        metadata: Optional[dict] = None,
     ) -> dict:
         """
         Create a job via POST /api/jobs.
@@ -33,6 +34,9 @@ class CrewClient:
                 ("vision", vision),
                 ("mode", mode),
             ]
+            if metadata:
+                import json
+                data.append(("metadata", json.dumps(metadata)))
             for u in github_urls:
                 data.append(("github_urls", u))
             file_tuples = [
@@ -47,13 +51,16 @@ class CrewClient:
                 timeout=120.0,
             )
         else:
+            payload = {
+                "vision": vision,
+                "github_urls": github_urls,
+                "mode": mode,
+            }
+            if metadata:
+                payload["metadata"] = metadata
             r = httpx.post(
                 f"{self.base_url}/api/jobs",
-                json={
-                    "vision": vision,
-                    "github_urls": github_urls,
-                    "mode": mode,
-                },
+                json=payload,
                 timeout=120.0,
             )
 
