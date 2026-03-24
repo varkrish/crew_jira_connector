@@ -10,3 +10,4 @@ htmlcov/
 .env
 *.db
 data/
+config.yaml
