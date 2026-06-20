@@ -11,6 +11,7 @@ from crew_jira_connector.ai_classifier import classify_issue
 from crew_jira_connector.config import get_settings
 from crew_jira_connector.crew_client import CrewClient
 from crew_jira_connector.db import IssueJobDB
+from crew_jira_connector.epic_planner import build_epic_vision, get_epic_stories
 from crew_jira_connector.gherkin_extractor import extract_feature_blocks, write_feature_files
 from crew_jira_connector.validators import (
     ValidationResult,
@@ -20,6 +21,11 @@ from crew_jira_connector.validators import (
     validate_and_extract_repo_urls,
     verify_webhook_signature,
 )
+
+try:
+    from crew_jira_connector.fix_prompt import build_fix_vision
+except ImportError:
+    from fix_prompt import build_fix_vision  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -73,12 +79,6 @@ def _get_description(payload: dict) -> str:
     return str(desc).strip()
 
 
-def _get_assignee_email(payload: dict) -> Optional[str]:
-    issue = payload.get("issue") or {}
-    assignee = issue.get("fields", {}).get("assignee") or {}
-    return assignee.get("emailAddress")
-
-
 async def process_webhook(
     payload: dict,
     raw_body: bytes,
@@ -118,6 +118,29 @@ async def process_webhook(
 
     summary = _get_summary(payload)
     description = _get_description(payload)
+    issue_type = _get_issue_type(payload)
+
+    # Epic: fetch child stories and create one sequential job
+    if issue_type and issue_type in settings.jira_epic_issue_types_list:
+        return await _handle_epic_webhook(
+            issue_key=issue_key,
+            summary=summary,
+            description=description,
+            settings=settings,
+            jira_backend=jira_backend,
+            db=db,
+        )
+
+    # Bug: import + auto fix when repo URL is present
+    if issue_type and issue_type in settings.jira_bug_issue_types_list:
+        return await _handle_bug_webhook(
+            issue_key=issue_key,
+            summary=summary,
+            description=description,
+            settings=settings,
+            jira_backend=jira_backend,
+            db=db,
+        )
 
     # 4. Content validation
     ok, errs, sanitized_vision = validate_content(
@@ -181,38 +204,18 @@ async def process_webhook(
     if not feature_blocks and classification.has_gherkin:
         feature_blocks = extract_feature_blocks(description)
 
-    # Auth token flow (Token Exchange / Client Credentials)
-    assignee_email = _get_assignee_email(payload)
-    token = None
-    original_assignee = None
-
-    if settings.auth_enabled:
-        from crew_jira_connector.keycloak_auth import ConnectorAuth
-        auth = ConnectorAuth()
-        if assignee_email:
-            token = auth.get_user_token(assignee_email)
-            if not token:
-                logger.warning("Token Exchange failed for %s. Falling back to service account.", assignee_email)
-                token = auth.get_service_token()
-                original_assignee = assignee_email
-        else:
-            logger.info("No assignee on issue. Using service account token.")
-            token = auth.get_service_token()
-
     jira_metadata = {
         "jira_issue_key": issue_key,
         "jira_base_url": settings.jira_base_url,
         "jira_issue_url": f"{settings.jira_base_url}/browse/{issue_key}",
     }
-    if original_assignee:
-        jira_metadata["original_assignee"] = original_assignee
 
     feature_files: list[Path] = []
     if feature_blocks:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             feature_files = write_feature_files(feature_blocks, tmp_path)
-            client = CrewClient(settings.crew_studio_url, token=token)
+            client = CrewClient(settings.crew_studio_url)
             try:
                 resp = client.create_job(
                     vision=sanitized_vision,
@@ -250,7 +253,7 @@ async def process_webhook(
             _post_comment(jira_backend, issue_key, f"Crew job created: {job_id} (mode={classification.mode})")
             return 200, {"job_id": job_id, "issue_key": issue_key, "mode": classification.mode}
     else:
-        client = CrewClient(settings.crew_studio_url, token=token)
+        client = CrewClient(settings.crew_studio_url)
         try:
             resp = client.create_job(
                 vision=sanitized_vision,
@@ -293,3 +296,187 @@ def _post_comment(backend: Any, issue_key: str, body: str) -> None:
         backend.add_comment(issue_key, body)
     except Exception as e:
         logger.warning("Failed to post Jira comment: %s", e)
+
+
+async def _handle_bug_webhook(
+    issue_key: str,
+    summary: str,
+    description: str,
+    settings: Any,
+    jira_backend: Any,
+    db: IssueJobDB,
+) -> tuple[int, dict]:
+    """Bug issue: clone repo, analyze, auto fix refine."""
+    ok, errs, sanitized = validate_content(
+        summary, description,
+        max_length=settings.max_vision_length,
+        min_summary_length=settings.min_summary_length,
+    )
+    if not ok:
+        _post_comment(jira_backend, issue_key, "Cannot start fix job: " + "; ".join(errs))
+        return 200, {"error": "content validation failed", "details": errs}
+
+    ok_url, repo_urls, url_errs = validate_and_extract_repo_urls(
+        f"{summary}\n{description}", settings.allowed_git_hosts_list,
+    )
+    if not ok_url or not repo_urls:
+        _post_comment(
+            jira_backend, issue_key,
+            "Cannot start fix job: include a repository URL (GitHub/GitLab/Bitbucket) in the description.",
+        )
+        return 200, {"error": "no repo url", "details": url_errs or ["missing repo URL"]}
+
+    if settings.validate_repo_access:
+        for url in repo_urls:
+            acc, msg = check_repo_access(url)
+            if not acc and msg:
+                _post_comment(jira_backend, issue_key, f"Repository not accessible: {msg}")
+                return 200, {"error": "repo access failed", "details": [msg]}
+
+    bug_vision = build_fix_vision(
+        summary=summary,
+        description=sanitized,
+        issue_key=issue_key,
+    )
+    jira_metadata = {
+        "jira_issue_key": issue_key,
+        "jira_issue_type": "Bug",
+        "jira_base_url": settings.jira_base_url,
+        "jira_issue_url": f"{settings.jira_base_url}/browse/{issue_key}",
+        "work_intent": "fix",
+        "refinement_kind": "fix",
+        "auto_fix_after_analyze": True,
+    }
+
+    client = CrewClient(settings.crew_studio_url)
+    try:
+        resp = client.create_job(
+            vision=bug_vision,
+            github_urls=repo_urls[:1],
+            mode="fix",
+            metadata=jira_metadata,
+        )
+    except Exception as e:
+        logger.exception("Failed to create fix job")
+        _post_comment(jira_backend, issue_key, f"Failed to create fix job: {e}")
+        return 200, {"error": str(e)}
+
+    job_id = resp.get("job_id")
+    if not job_id:
+        _post_comment(jira_backend, issue_key, "Crew Studio did not return job_id")
+        return 200, {"error": "no job_id"}
+
+    db.insert(issue_key, job_id, "fix")
+    _post_comment(
+        jira_backend, issue_key,
+        f"Fix job created: {job_id} (import + auto-fix from {repo_urls[0]})",
+    )
+    return 200, {"job_id": job_id, "issue_key": issue_key, "mode": "fix"}
+
+
+async def _handle_epic_webhook(
+    issue_key: str,
+    summary: str,
+    description: str,
+    settings: Any,
+    jira_backend: Any,
+    db: IssueJobDB,
+) -> tuple[int, dict]:
+    """Process Epic issue: fetch stories, create one Crew job with jira_stories metadata."""
+    ok, errs, sanitized_vision = validate_content(
+        summary, description,
+        max_length=settings.max_vision_length,
+        min_summary_length=settings.min_summary_length,
+    )
+    if not ok:
+        _post_comment(jira_backend, issue_key, "Cannot start Epic job: " + "; ".join(errs))
+        return 200, {"error": "content validation failed", "details": errs}
+
+    try:
+        stories = get_epic_stories(
+            jira_backend, issue_key, jql_template=settings.jira_story_jql_template
+        )
+    except ValueError:
+        stories = []
+    except Exception as e:
+        logger.exception("Failed to fetch epic stories")
+        _post_comment(jira_backend, issue_key, f"Failed to fetch epic stories: {e}")
+        return 200, {"error": str(e)}
+
+    if stories:
+        epic_vision = build_epic_vision(summary, sanitized_vision, stories)
+    else:
+        epic_vision = f"# Epic: {summary}\n{sanitized_vision}\n\n## User Stories\n(No child stories yet — AI will decompose after planning.)"
+
+    classification = await classify_issue(
+        summary=summary,
+        description=epic_vision,
+        issue_type="Epic",
+        api_base_url=settings.llm_api_base_url,
+        api_key=settings.llm_api_key,
+        model=settings.llm_model,
+        mode_map=settings.jira_mode_map_dict,
+        default_mode=settings.jira_default_mode,
+        confidence_threshold=settings.classifier_confidence_threshold,
+    )
+
+    ok_cls, cls_errs = validate_classifier_output(
+        mode=classification.mode,
+        repo_url=classification.repo_url,
+        has_gherkin=classification.has_gherkin,
+        gherkin_features=classification.gherkin_features,
+        confidence=classification.confidence,
+        threshold=settings.classifier_confidence_threshold,
+    )
+    if not ok_cls:
+        _post_comment(jira_backend, issue_key, "Could not classify epic: " + "; ".join(cls_errs))
+        return 200, {"error": "classifier validation failed", "details": cls_errs}
+
+    github_urls = [classification.repo_url] if classification.repo_url else []
+    project_key = issue_key.split("-", 1)[0] if "-" in issue_key else issue_key
+    jira_metadata = {
+        "jira_epic_key": issue_key,
+        "jira_project_key": project_key,
+        "jira_issue_key": issue_key,
+        "jira_base_url": settings.jira_base_url,
+        "jira_issue_url": f"{settings.jira_base_url}/browse/{issue_key}",
+        "jira_stories": [s.to_metadata_dict() for s in stories],
+        "last_completed_story_index": -1,
+    }
+
+    client = CrewClient(settings.crew_studio_url)
+    try:
+        resp = client.create_job(
+            vision=epic_vision,
+            github_urls=github_urls,
+            mode=classification.mode,
+            feature_files=None,
+            metadata=jira_metadata,
+        )
+    except Exception as e:
+        logger.exception("Failed to create Epic Crew job")
+        _post_comment(jira_backend, issue_key, f"Failed to create Crew job: {e}")
+        return 200, {"error": str(e)}
+
+    job_id = resp.get("job_id")
+    if not job_id:
+        _post_comment(jira_backend, issue_key, "Crew Studio did not return job_id")
+        return 200, {"error": "no job_id"}
+
+    story_keys = [s.key for s in stories]
+    db.insert_epic(issue_key, job_id, classification.mode, story_keys)
+    if stories:
+        comment = f"Epic Crew job created: {job_id} ({len(stories)} stories, mode={classification.mode})"
+    else:
+        comment = (
+            f"Epic Crew job created: {job_id} (no child stories — AI will decompose; "
+            f"mode={classification.mode})"
+        )
+    _post_comment(jira_backend, issue_key, comment)
+    return 200, {
+        "job_id": job_id,
+        "issue_key": issue_key,
+        "mode": classification.mode,
+        "epic": True,
+        "story_count": len(stories),
+    }

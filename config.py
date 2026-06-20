@@ -15,12 +15,6 @@ class Settings(BaseSettings):
     # Crew Studio
     crew_studio_url: str = "http://localhost:8081"
 
-    # Auth
-    auth_enabled: bool = True
-    keycloak_token_url: str = ""
-    keycloak_client_id: str = ""
-    keycloak_client_secret: str = ""
-
     # Jira backend
     jira_backend: str = "rest"
     jira_base_url: str = ""
@@ -34,6 +28,9 @@ class Settings(BaseSettings):
     jira_project_keys: str = ""
     jira_trigger_status: str = "Ready for Dev"
     jira_webhook_secret: str = ""
+    jira_epic_issue_types: str = "Epic"
+    jira_bug_issue_types: str = "Bug"
+    jira_story_jql_template: str = '"Epic Link" = {epic_key} ORDER BY created ASC'
 
     # Validation
     max_vision_length: int = 50_000
@@ -85,6 +82,18 @@ class Settings(BaseSettings):
             if len(parts) == 2:
                 result[parts[0].strip()] = parts[1].strip()
         return result
+
+    @property
+    def jira_epic_issue_types_list(self) -> list[str]:
+        if not self.jira_epic_issue_types:
+            return ["Epic"]
+        return [t.strip() for t in self.jira_epic_issue_types.split(",") if t.strip()]
+
+    @property
+    def jira_bug_issue_types_list(self) -> list[str]:
+        if not self.jira_bug_issue_types:
+            return ["Bug"]
+        return [t.strip() for t in self.jira_bug_issue_types.split(",") if t.strip()]
 
 
 def load_llm_config_from_crew_ai() -> tuple[str, str, str]:

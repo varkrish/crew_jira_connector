@@ -214,3 +214,39 @@ def test_transition_not_found(server_backend):
     with patch.object(server_backend, "_request", return_value=transitions_resp):
         with pytest.raises(ValueError, match="not found"):
             server_backend.transition("AC-1", "Nonexistent")
+
+
+# --- Search ---
+
+def test_search_cloud(cloud_backend):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {
+        "issues": [
+            {"key": "PROJ-10", "fields": {"summary": "Story A"}},
+            {"key": "PROJ-11", "fields": {"summary": "Story B"}},
+        ]
+    }
+    mock_resp.raise_for_status = MagicMock()
+
+    with patch.object(cloud_backend, "_request", return_value=mock_resp) as mock_req:
+        results = cloud_backend.search('"Epic Link" = PROJ-1 ORDER BY created ASC')
+        assert len(results) == 2
+        assert results[0]["key"] == "PROJ-10"
+        mock_req.assert_called_once()
+        call_kwargs = mock_req.call_args[1]
+        assert call_kwargs["json"]["jql"] == '"Epic Link" = PROJ-1 ORDER BY created ASC'
+
+
+def test_search_server(server_backend):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"issues": []}
+    mock_resp.raise_for_status = MagicMock()
+
+    with patch.object(server_backend, "_request", return_value=mock_resp) as mock_req:
+        results = server_backend.search("parent = AC-1")
+        assert results == []
+        mock_req.assert_called_once_with(
+            "POST",
+            "/rest/api/2/search",
+            json={"jql": "parent = AC-1", "maxResults": 100, "fields": ["summary", "description", "status", "issuetype", "priority"]},
+        )

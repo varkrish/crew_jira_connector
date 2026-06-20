@@ -1,5 +1,6 @@
 """Abstract Jira backend interface."""
 from abc import ABC, abstractmethod
+from typing import Optional
 
 
 class JiraBackend(ABC):
@@ -21,3 +22,15 @@ class JiraBackend(ABC):
     def search(self, jql: str) -> list[dict]:
         """Search issues by JQL. Optional, default returns empty list."""
         return []
+
+    @abstractmethod
+    def create_issue(
+        self,
+        project_key: str,
+        summary: str,
+        description: str,
+        issue_type: str = "Story",
+        parent_key: Optional[str] = None,
+    ) -> str:
+        """Create a new issue. Returns the new issue key."""
+        ...

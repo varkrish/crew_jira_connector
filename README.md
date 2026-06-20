@@ -5,6 +5,7 @@ Bridges Jira issues to [Crew Studio](https://github.com/varkrish/opl-ai-software
 ## Features
 
 - **Webhook** — `POST /webhooks/jira` for Jira issue created/updated events
+- **Epic orchestration** — Epic in trigger status fetches linked Stories and creates one sequential Crew job
 - **AI classifier** — Detects mode (build / refactor / migration), repo URLs, and Gherkin from issue text
 - **Validation** — Content length, URL allowlist, SSRF protection, optional repo accessibility check
 - **Gherkin** — Extracts `.feature` blocks from descriptions and uploads them with the job
@@ -42,10 +43,6 @@ Then in Jira: create a webhook pointing to `http://<this-server>:8080/webhooks/j
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `CREW_STUDIO_URL` | Crew Studio API base URL | `http://localhost:8081` |
-| `AUTH_ENABLED` | Enable OAuth/OIDC Token Exchange | `true` |
-| `KEYCLOAK_TOKEN_URL` | Token URL of Identity Provider (e.g. `http://keycloak:8080/realms/opl-crew/protocol/openid-connect/token`) | — |
-| `KEYCLOAK_CLIENT_ID` | Client ID for connector service account | — |
-| `KEYCLOAK_CLIENT_SECRET` | Client secret for connector service account | — |
 | `JIRA_BACKEND` | `rest`, `atlassian_mcp`, or `local_mcp` | `rest` |
 | `JIRA_BASE_URL` | Jira instance URL (e.g. `https://site.atlassian.net`) | — |
 | `JIRA_EMAIL` | Jira user email (REST / Atlassian MCP) | — |
@@ -57,6 +54,8 @@ Then in Jira: create a webhook pointing to `http://<this-server>:8080/webhooks/j
 | `LLM_API_BASE_URL` / `LLM_API_KEY` | LLM for classifier (or use `~/.crew-ai/config.yaml`) | — |
 | `LLM_MODEL` | Model name | `gpt-4o-mini` |
 | `JIRA_TRANSITION_DONE` / `JIRA_TRANSITION_FAILED` | Transition names when job completes/fails | `Done` / `Failed` |
+| `JIRA_EPIC_ISSUE_TYPES` | Issue types treated as Epics | `Epic` |
+| `JIRA_STORY_JQL_TEMPLATE` | JQL to fetch Epic child stories | `"Epic Link" = {epic_key} ORDER BY created ASC` |
 | `POLL_INTERVAL_SECONDS` | How often to poll job status | `15` |
 | `DB_PATH` | SQLite path for issue–job mapping | `./data/connector.db` |
 

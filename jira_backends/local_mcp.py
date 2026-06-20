@@ -136,6 +136,27 @@ class LocalMCPBackend(JiraBackend):
             return result
         return result.get("issues", [])
 
+    def create_issue(
+        self,
+        project_key: str,
+        summary: str,
+        description: str,
+        issue_type: str = "Story",
+        parent_key: Optional[str] = None,
+    ) -> str:
+        args: dict = {
+            "projectKey": project_key,
+            "summary": summary,
+            "description": description,
+            "issueType": issue_type,
+        }
+        if parent_key:
+            args["parentKey"] = parent_key
+        result = self._call_tool("jira_create_issue", args)
+        if isinstance(result, dict):
+            return result.get("key") or result.get("issueKey") or str(result)
+        return str(result)
+
     def shutdown(self) -> None:
         """Terminate the MCP server process."""
         if self._process and self._process.poll() is None:

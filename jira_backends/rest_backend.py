@@ -1,7 +1,7 @@
 """Jira REST API backend with auto-detection for Server vs Cloud."""
 import base64
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 
@@ -116,3 +116,50 @@ class JiraRestBackend(JiraBackend):
             raise ValueError(f"Transition '{transition_name}' not found for issue {key}")
         r = self._request("POST", self._api_path(f"/issue/{key}/transitions"), json={"transition": {"id": tid}})
         r.raise_for_status()
+
+    def search(self, jql: str, max_results: int = 100) -> list[dict]:
+        payload = {
+            "jql": jql,
+            "maxResults": max_results,
+            "fields": ["summary", "description", "status", "issuetype", "priority"],
+        }
+        r = self._request("POST", self._api_path("/search"), json=payload)
+        r.raise_for_status()
+        return r.json().get("issues", [])
+
+    def _format_description(self, description: str) -> Any:
+        if self._is_server is None:
+            self._detect_server()
+        if self._is_server:
+            return description
+        return {
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "paragraph",
+                    "content": [{"type": "text", "text": description}],
+                }
+            ],
+        }
+
+    def create_issue(
+        self,
+        project_key: str,
+        summary: str,
+        description: str,
+        issue_type: str = "Story",
+        parent_key: Optional[str] = None,
+    ) -> str:
+        fields: dict = {
+            "project": {"key": project_key},
+            "summary": summary,
+            "description": self._format_description(description),
+            "issuetype": {"name": issue_type},
+        }
+        if parent_key:
+            fields["parent"] = {"key": parent_key}
+
+        r = self._request("POST", self._api_path("/issue"), json={"fields": fields})
+        r.raise_for_status()
+        return r.json()["key"]

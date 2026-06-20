@@ -28,3 +28,23 @@ def test_list_active(db):
     active = db.list_active()
     assert len(active) == 1
     assert active[0]["issue_key"] == "P-2"
+
+
+def test_insert_epic_job(db):
+    db.insert_epic("EPIC-1", "job-epic", "build", ["S-1", "S-2"])
+    row = db.get_epic("EPIC-1")
+    assert row is not None
+    assert row["job_id"] == "job-epic"
+    assert row["story_keys"] == ["S-1", "S-2"]
+    assert row["current_story_index"] == 0
+
+
+def test_update_story_progress(db):
+    db.insert_epic("EPIC-2", "job-x", "build", ["S-10", "S-11"])
+    db.update_story_progress("EPIC-2", "S-10", "done", commit_sha="abc123")
+    db.advance_story_index("EPIC-2", 1)
+    row = db.get_epic("EPIC-2")
+    assert row["current_story_index"] == 1
+    progress = db.get_story_progress("S-10")
+    assert progress["status"] == "done"
+    assert progress["commit_sha"] == "abc123"

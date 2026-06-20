@@ -75,3 +75,34 @@ def test_poll_empty(poller):
         poller._run_once()
 
     poller.crew_client.get_job_status.assert_not_called()
+
+
+def test_poll_epic_story_completed(poller, db):
+    """Epic job with new story_completed message syncs individual story."""
+    db.insert_epic("EPIC-5", "j-epic", "build", ["S-1", "S-2"])
+    poller.crew_client.get_job_status.return_value = {
+        "status": "running",
+        "current_phase": "development",
+        "metadata": {
+            "jira_epic_key": "EPIC-5",
+            "last_completed_story_index": 0,
+            "jira_stories": [
+                {"key": "S-1", "summary": "Login"},
+                {"key": "S-2", "summary": "Logout"},
+            ],
+        },
+        "last_message": [
+            {"type": "story_completed", "story_key": "S-1", "commit_sha": "abc1234", "index": 0},
+        ],
+    }
+
+    with patch("crew_jira_connector.status_poller.get_settings") as mock_s:
+        mock_s.return_value.jira_transition_done = "Done"
+        mock_s.return_value.jira_transition_failed = "Failed"
+        poller._run_once()
+
+    poller.jira_backend.add_comment.assert_called()
+    assert any("S-1" in str(c) for c in poller.jira_backend.add_comment.call_args_list)
+    progress = db.get_story_progress("S-1")
+    assert progress is not None
+    assert progress["status"] == "done"
