@@ -42,6 +42,10 @@ Then in Jira: create a webhook pointing to `http://<this-server>:8080/webhooks/j
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `CREW_STUDIO_URL` | Crew Studio API base URL | `http://localhost:8081` |
+| `AUTH_ENABLED` | Enable OAuth/OIDC Token Exchange | `true` |
+| `KEYCLOAK_TOKEN_URL` | Token URL of Identity Provider (e.g. `http://keycloak:8080/realms/opl-crew/protocol/openid-connect/token`) | — |
+| `KEYCLOAK_CLIENT_ID` | Client ID for connector service account | — |
+| `KEYCLOAK_CLIENT_SECRET` | Client secret for connector service account | — |
 | `JIRA_BACKEND` | `rest`, `atlassian_mcp`, or `local_mcp` | `rest` |
 | `JIRA_BASE_URL` | Jira instance URL (e.g. `https://site.atlassian.net`) | — |
 | `JIRA_EMAIL` | Jira user email (REST / Atlassian MCP) | — |

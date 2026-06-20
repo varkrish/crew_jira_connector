@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     # Crew Studio
     crew_studio_url: str = "http://localhost:8081"
 
+    # Auth
+    auth_enabled: bool = True
+    keycloak_token_url: str = ""
+    keycloak_client_id: str = ""
+    keycloak_client_secret: str = ""
+
     # Jira backend
     jira_backend: str = "rest"
     jira_base_url: str = ""

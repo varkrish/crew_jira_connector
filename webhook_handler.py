@@ -73,6 +73,12 @@ def _get_description(payload: dict) -> str:
     return str(desc).strip()
 
 
+def _get_assignee_email(payload: dict) -> Optional[str]:
+    issue = payload.get("issue") or {}
+    assignee = issue.get("fields", {}).get("assignee") or {}
+    return assignee.get("emailAddress")
+
+
 async def process_webhook(
     payload: dict,
     raw_body: bytes,
@@ -175,18 +181,38 @@ async def process_webhook(
     if not feature_blocks and classification.has_gherkin:
         feature_blocks = extract_feature_blocks(description)
 
+    # Auth token flow (Token Exchange / Client Credentials)
+    assignee_email = _get_assignee_email(payload)
+    token = None
+    original_assignee = None
+
+    if settings.auth_enabled:
+        from crew_jira_connector.keycloak_auth import ConnectorAuth
+        auth = ConnectorAuth()
+        if assignee_email:
+            token = auth.get_user_token(assignee_email)
+            if not token:
+                logger.warning("Token Exchange failed for %s. Falling back to service account.", assignee_email)
+                token = auth.get_service_token()
+                original_assignee = assignee_email
+        else:
+            logger.info("No assignee on issue. Using service account token.")
+            token = auth.get_service_token()
+
     jira_metadata = {
         "jira_issue_key": issue_key,
         "jira_base_url": settings.jira_base_url,
         "jira_issue_url": f"{settings.jira_base_url}/browse/{issue_key}",
     }
+    if original_assignee:
+        jira_metadata["original_assignee"] = original_assignee
 
     feature_files: list[Path] = []
     if feature_blocks:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             feature_files = write_feature_files(feature_blocks, tmp_path)
-            client = CrewClient(settings.crew_studio_url)
+            client = CrewClient(settings.crew_studio_url, token=token)
             try:
                 resp = client.create_job(
                     vision=sanitized_vision,
@@ -224,7 +250,7 @@ async def process_webhook(
             _post_comment(jira_backend, issue_key, f"Crew job created: {job_id} (mode={classification.mode})")
             return 200, {"job_id": job_id, "issue_key": issue_key, "mode": classification.mode}
     else:
-        client = CrewClient(settings.crew_studio_url)
+        client = CrewClient(settings.crew_studio_url, token=token)
         try:
             resp = client.create_job(
                 vision=sanitized_vision,
